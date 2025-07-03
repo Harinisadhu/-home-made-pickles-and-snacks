@@ -56,13 +56,11 @@
   <div class="container">
     <h1>Feedback</h1>
     <p>We'd love to hear your thoughts about Home Pickles!</p>
-    <form id="feedbackForm">
+    <form id="feedbackForm" method="post" action="{{ url_for('thanku') }}">
       <input type="text" name="name" placeholder="Your Name" required>
       <input type="email" name="email" placeholder="Your Email" required>
       <textarea name="message" rows="5" placeholder="Your Feedback" required></textarea>
-      <a href="{{ url_for('thanku') }}">
-  <button type="button">Submit Feedback</button>
-</a>
+      <button type="submit">Submit Feedback</button>
     </form>
   </div>
 
