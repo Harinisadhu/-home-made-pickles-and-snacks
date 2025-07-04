@@ -1,45 +1,106 @@
 import os
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
+
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import NoCredentialsError, ClientError
 
-# ------------------------------------------------------------------------------
-# Flask setup
-# ------------------------------------------------------------------------------
+# --- Flask Setup ---
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "1q2w3e4r5t6y")  # Use env-var for production
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'supersecretkey')
 
-# ------------------------------------------------------------------------------
-# AWS setup
-# ------------------------------------------------------------------------------
-AWS_REGION = os.getenv('AWS_REGION', 'ap-south-1')
-USER_TABLE_NAME = os.getenv('USER_TABLE_NAME', 'HomePicklesUsers')
-FEEDBACK_TABLE_NAME = os.getenv('FEEDBACK_TABLE_NAME', 'HomePicklesFeedback')
-SNS_ORDER_TOPIC_ARN = os.getenv('SNS_ORDER_TOPIC_ARN')  # Required
-SNS_FEEDBACK_TOPIC_ARN = os.getenv('SNS_FEEDBACK_TOPIC_ARN')  # Required
+# --- AWS Setup ---
+use_dynamo = False
+sns = None
+users_table = None
+orders_table = None
+local_users = {}
+local_orders = []
 
-dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
-sns = boto3.client('sns', region_name=AWS_REGION)
-ec2 = boto3.client('ec2', region_name=AWS_REGION)
+try:
+    session_boto = boto3.Session()
+    dynamodb = session_boto.resource('dynamodb', region_name='ap-south-1')
+    sns = session_boto.client('sns', region_name='ap-south-1')
 
-# ------------------------------------------------------------------------------
-# Session cart init
-# ------------------------------------------------------------------------------
-@app.before_request
-def init_session():
-    session.setdefault('cart', [])
-    session.setdefault('user', None)
+    dynamodb.meta.client.list_tables()  # Test DynamoDB connection
+    users_table = dynamodb.Table('Users')
+    orders_table = dynamodb.Table('Orders')
 
-# ------------------------------------------------------------------------------
-# Routes
-# ------------------------------------------------------------------------------
+    use_dynamo = True
+except (NoCredentialsError, ClientError) as e:
+    print(f"AWS error or credentials not found: {e}")
+
+# Temporary store for password reset codes
+reset_codes = {}
+
+# ------------------- ROUTES -------------------
 
 @app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/home')
 def home():
-    return render_template('index.html')
+    return render_template('home.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form.get('username')
+        password = request.form.get('password')
+
+        user = users_table.get_item(Key={'email': email}).get('Item') if use_dynamo else local_users.get(email)
+        if user and check_password_hash(user['password'], password):
+            session['user'] = email
+            flash('Login successful', 'success')
+            return redirect(url_for('shop'))
+        else:
+            flash('Invalid credentials', 'error')
+            return redirect(url_for('login'))
+
+    return render_template('login.html')
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        fullname = request.form.get('fullname')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm = request.form.get('confirm')
+
+        if password != confirm:
+            flash('Passwords do not match.', 'error')
+            return redirect(url_for('signup'))
+
+        hashed_pw = generate_password_hash(password)
+
+        if use_dynamo:
+            existing = users_table.get_item(Key={'email': email}).get('Item')
+            if existing:
+                flash('Email already registered', 'error')
+                return redirect(url_for('signup'))
+
+            users_table.put_item(Item={
+                'email': email,
+                'fullname': fullname,
+                'password': hashed_pw
+            })
+        else:
+            if email in local_users:
+                flash('Email already registered', 'error')
+                return redirect(url_for('signup'))
+
+            local_users[email] = {
+                'email': email,
+                'fullname': fullname,
+                'password': hashed_pw
+            }
+
+        flash('Signup successful. Please login.', 'success')
+        return redirect(url_for('login'))
+
+    return render_template('signup.html')
 
 @app.route('/shop')
 def shop():
@@ -47,131 +108,72 @@ def shop():
 
 @app.route('/cart')
 def cart():
-    return render_template('cart.html', cart=session.get('cart', []))
+    return render_template('cart.html')
 
-@app.route('/add_to_cart', methods=['POST'])
-def add_to_cart():
-    data = request.form
-    name = data.get('name')
-    price = int(data.get('price'))
-    image = data.get('image')
-
-    cart = session.get('cart', [])
-    for item in cart:
-        if item['name'] == name:
-            item['quantity'] += 1
-            break
-    else:
-        cart.append({'name': name, 'price': price, 'image': image, 'quantity': 1})
-
-    session['cart'] = cart
-    flash(f"{name} added to cart", "success")
-    return redirect(url_for('shop'))
-
-@app.route('/remove_from_cart', methods=['POST'])
-def remove_from_cart():
-    name = request.form.get('name')
-    cart = session.get('cart', [])
-    session['cart'] = [item for item in cart if item['name'] != name]
-    return redirect(url_for('cart'))
-
-@app.route('/buynow')
+@app.route('/buynow', methods=['GET', 'POST'])
 def buynow():
-    try:
-        sns.publish(
-            TopicArn=SNS_ORDER_TOPIC_ARN,
-            Subject="New Home Pickles Order",
-            Message="A new order has been placed via the Home Pickles website."
-        )
-    except ClientError as e:
-        app.logger.error("SNS Order Publish Failed: %s", e)
-    session['cart'] = []
+    if request.method == 'POST':
+        if 'user' not in session:
+            flash('Please login to place an order.', 'error')
+            return redirect(url_for('login'))
+
+        name = request.form['name']
+        phone = request.form['phone']
+        address = request.form['address']
+        total = request.form['total']
+
+        if not phone.isdigit() or len(phone) != 10:
+            flash('Invalid phone number.', 'error')
+            return redirect(url_for('buynow'))
+
+        order_id = str(uuid.uuid4())
+        email = session['user']
+
+        order = {
+            'order_id': order_id,
+            'email': email,
+            'name': name,
+            'phone': phone,
+            'address': address,
+            'total': total
+        }
+
+        if use_dynamo:
+            try:
+                orders_table.put_item(Item=order)
+                message = f"Hi {name}, your order {order_id} is confirmed. Total ₹{total}."
+                sns.publish(PhoneNumber='+91' + phone, Message=message)
+            except ClientError as e:
+                print("Error sending SMS or saving order:", e)
+        else:
+            local_orders.append(order)
+
+        return render_template('buynow.html', order_id=order_id)
+
     return render_template('buynow.html')
 
-@app.route('/feedback')
+@app.route('/feedback', methods=['GET', 'POST'])
 def feedback():
-    return render_template('feedback.html')
-
-@app.route('/thanku', methods=['POST', 'GET'])
-def thanku():
     if request.method == 'POST':
         name = request.form.get('name')
         email = request.form.get('email')
         message = request.form.get('message')
+        print(f"Feedback received from {name} ({email}): {message}")
+        return redirect(url_for('thanku'))  # ✅ this goes to thanku.html
+    return render_template('feedback.html')
 
-        try:
-            fb_tbl = dynamodb.Table(FEEDBACK_TABLE_NAME)
-            fb_tbl.put_item(Item={
-                'id': str(uuid.uuid4()),
-                'name': name,
-                'email': email,
-                'message': message
-            })
 
-            sns.publish(
-                TopicArn=SNS_FEEDBACK_TOPIC_ARN,
-                Subject="New Home Pickles Feedback",
-                Message=f"Name: {name}\nEmail: {email}\n\n{message}"
-            )
-        except ClientError as e:
-            app.logger.error("Feedback SNS or DynamoDB failed: %s", e)
-
+@app.route('/thanku')
+def thanku():
     return render_template('thanku.html')
 
-@app.route('/login', methods=['POST'])
-def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    try:
-        user_tbl = dynamodb.Table(USER_TABLE_NAME)
-        resp = user_tbl.get_item(Key={'username': username})
-        user = resp.get('Item')
-        if user and check_password_hash(user['password'], password):
-            session['user'] = username
-            return redirect(url_for('home'))
-        else:
-            flash('Invalid credentials', 'danger')
-            return redirect(url_for('home'))
-    except ClientError as e:
-        return f"Login error: {e.response['Error']['Message']}", 500
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('index'))
 
-@app.route('/signup', methods=['POST'])
-def signup():
-    username = request.form.get('username')
-    email = request.form.get('email')
-    password = generate_password_hash(request.form.get('password'))
-    try:
-        user_tbl = dynamodb.Table(USER_TABLE_NAME)
-        user_tbl.put_item(
-            Item={'username': username, 'email': email, 'password': password},
-            ConditionExpression='attribute_not_exists(username)'
-        )
-        flash('Registration successful. Please login.', 'success')
-        return redirect(url_for('home'))
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-            return "Username already exists", 409
-        return f"Signup failed: {e.response['Error']['Message']}", 500
+# -------------------- Run App --------------------
 
-@app.route('/ec2-info')
-def ec2_info():
-    try:
-        data = ec2.describe_instances()
-        instances = [
-            {
-                'InstanceId': i['InstanceId'],
-                'State': i['State']['Name'],
-                'Type': i['InstanceType'],
-                'PublicIP': i.get('PublicIpAddress', 'N/A')
-            }
-            for r in data['Reservations'] for i in r['Instances']
-        ]
-        return jsonify(instances)
-    except ClientError as e:
-        return f"EC2 error: {e.response['Error']['Message']}", 500
-
-# ------------------------------------------------------------------------------
-# Run server
-# ------------------------------------------------------------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
