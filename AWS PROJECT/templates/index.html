@@ -39,16 +39,23 @@
       color: red;
     }
 
-    nav a {
-      margin: 0 15px;
-      color: white;
-      text-decoration: none;
-      font-weight: 600;
+    .auth-buttons {
+      display: flex;
+      gap: 10px;
     }
 
-    nav a:hover,
-    nav a.active {
-      color: red;
+    .auth-buttons a {
+      text-decoration: none;
+      color: white;
+      background-color: red;
+      padding: 8px 16px;
+      border-radius: 5px;
+      font-weight: bold;
+      transition: background-color 0.3s ease;
+    }
+
+    .auth-buttons a:hover {
+      background-color: darkred;
     }
 
     .hero {
@@ -72,13 +79,7 @@
       color: #ccc;
     }
 
-    .login-link, .signup-link {
-      color: red;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-     #about h2 {
+    #about h2 {
       color: red;
       font-size: 32px;
       margin-bottom: 20px;
@@ -89,65 +90,15 @@
       font-size: 16px;
       line-height: 1.6;
     }
-
-    /* Modal Common */
-    .modal {
-      display: none;
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      background: rgba(0,0,0,0.7);
-      justify-content: center;
-      align-items: center;
-    }
-
-    .modal-content {
-      background: white;
-      color: black;
-      padding: 30px;
-      border-radius: 8px;
-      width: 300px;
-    }
-
-    .modal-content h2 {
-      margin-top: 0;
-    }
-
-    .modal-content input {
-      width: 100%;
-      padding: 10px;
-      margin: 10px 0;
-    }
-
-    .modal-content button {
-      width: 100%;
-      padding: 10px;
-      background: red;
-      color: white;
-      border: none;
-      cursor: pointer;
-    }
-
-    .modal-content button:hover {
-      background: darkred;
-    }
-
-    .close {
-      float: right;
-      cursor: pointer;
-      color: red;
-      font-weight: bold;
-    }
   </style>
 </head>
 <body>
   <header>
     <div class="logo">Home <span>Pickles</span></div>
-    <nav>
-      <a class="login-link" onclick="openLogin()">LOGIN</a>
-      <a class="signup-link" onclick="openSignup()">SIGN UP</a>
-      
-    </nav>
+    <div class="auth-buttons">
+      <a href="{{ url_for('login') }}">Login</a>
+      <a href="{{ url_for('signup') }}">Signup</a>
+    </div>
   </header>
 
   <section class="hero">
@@ -157,7 +108,6 @@
     </div>
   </section>
 
-  <!-- About Section -->
   <section id="about">
     <h2>About Us</h2>
     <p>
@@ -165,68 +115,12 @@
     </p>
   </section>
 
-  <!-- ✅ NEW CONTACT SECTION -->
-<section id="contact" style="margin-top: 40px; padding: 20px;">
-  <h2 style="color: red; font-size: 32px; margin-bottom: 20px;">Contact Us</h2>
-  <p style="font-size: 16px; line-height: 1.6;">
-    <strong>Email:</strong> contact@homepickles.com<br>
-    <strong>Phone:</strong> +91 98765 43210
-  </p>
-</section>
-
-  <!-- Login Modal -->
-  <div class="modal" id="loginModal">
-    <div class="modal-content">
-      <span class="close-btn" onclick="closeModal('loginModal')">&times;</span>
-      <h2>Login</h2>
-      <form action="/login" method="post">
-        <input type="text" name="username" placeholder="Username" required />
-        <input type="password" name="password" placeholder="Password" required />
-        <button type="submit">Login</button>
-      </form>
-    </div>
-  </div>
-
- <!-- Signup Modal -->
-  <div class="modal" id="signupModal">
-    <div class="modal-content">
-      <span class="close-btn" onclick="closeModal('signupModal')">&times;</span>
-      <h2>Sign Up</h2>
-      <form action="/signup" method="post">
-        <input type="text" name="username" placeholder="Username" required />
-        <input type="email" name="email" placeholder="Email" required />
-        <input type="password" name="password" placeholder="Password" required />
-        <button type="submit">Sign Up</button>
-      </form>
-    </div>
-  </div>
-
-  <script>
-    // Login Modal
-    function openLogin() {
-      document.getElementById('loginModal').style.display = 'flex';
-    }
-    function closeLogin() {
-      document.getElementById('loginModal').style.display = 'none';
-    }
-
-    // Signup Modal
-    function openSignup() {
-      document.getElementById('signupModal').style.display = 'flex';
-    }
-    function closeSignup() {
-      document.getElementById('signupModal').style.display = 'none';
-    }
-
-    // Close modal when clicking outside
-    window.onclick = function(e) {
-      if (e.target == document.getElementById('loginModal')) {
-        closeLogin();
-      }
-      if (e.target == document.getElementById('signupModal')) {
-        closeSignup();
-      }
-    }
-  </script>
+  <section id="contact" style="margin-top: 40px; padding: 20px;">
+    <h2 style="color: red; font-size: 32px; margin-bottom: 20px;">Contact Us</h2>
+    <p style="font-size: 16px; line-height: 1.6;">
+      <strong>Email:</strong> contact@homepickles.com<br>
+      <strong>Phone:</strong> +91 98765 43210
+    </p>
+  </section>
 </body>
 </html>
